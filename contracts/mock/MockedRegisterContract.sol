@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "../interface/IAiprojectRegister.sol";
+import "../interface/IPrecompileContract.sol";
 
 // Uncomment this line to use console.log
 // import "hardhat/console.sol";
 
-contract MockedAIProjectRegister is IAIProjectRegister {
+contract MockedAIProjectRegister is IPrecompileContract {
 
 
 

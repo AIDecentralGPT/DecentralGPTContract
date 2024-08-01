@@ -11,17 +11,17 @@ import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefau
 import "abdk-libraries-solidity/ABDKMath64x64.sol";
 import "./lib/MachineRoles.sol";
 import "./lib/Roles.sol";
-import "./interface/IAiprojectRegister.sol";
+import "./interface/IPrecompileContract.sol";
 import "./rolesManager/ReportRoleManger.sol";
 import "./slashMachineReporter/SlashMachineReporter.sol";
 
 contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashMachineReporter{
 //    using Math for uint256;
-    IAIProjectRegister public registerContract;
+    IPrecompileContract public registerContract;
     uint256 public constant secondsPerBlock = 30;
     IERC20 public rewardToken;
     uint256 public rewardAmountPerSecond;
-    uint256 private constant baseReserveAmount = 10_000 * 10**18;
+    uint256 public constant baseReserveAmount = 10_000 * 10**18;
     string public constant projectName = "dgc";
 
     uint256 public totalStakedMachineMultiCalcPoint;
@@ -61,11 +61,11 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
         __Ownable_init(_initialOwner);
         rewardToken = IERC20(_rewardToken);
         rewardAmountPerSecond = _rewardAmountPerSecond;
-        registerContract = IAIProjectRegister(_registerContract);
+        registerContract = IPrecompileContract(_registerContract);
     }
 
     function setRegisterContract(address _registerContract) onlyOwner external {
-        registerContract = IAIProjectRegister(_registerContract);
+        registerContract = IPrecompileContract(_registerContract);
     }
 
 
@@ -160,6 +160,7 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
         uint256 totalBaseReward = rewardAmountPerSecond* rewardDuration;
 
 
+
         uint256 _totalStakedMachineMultiCalcPoint = totalStakedMachineMultiCalcPoint;
         if (stakeInfo.slashAt > 0){
             _totalStakedMachineMultiCalcPoint += stakeInfo.calcPoint;
@@ -172,6 +173,7 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
         uint256 tmp = 1 + value/baseReserveAmount;
         int128 ln = ABDKMath64x64.fromUInt(tmp);
         uint256 totalRewardAmount = baseRewardAmount* (1+nonlinearCoefficient *ABDKMath64x64.toUInt(ln));
+
         return totalRewardAmount;
     }
 
@@ -195,7 +197,7 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
         return getRentDuration(msgToSign,substrateSig,substratePubKey, lastClaimAt,slashAt,machineId);
     }
 
-    function getReward(string memory msgToSign,string memory substrateSig,string memory substratePubKey,string memory machineId) external view returns (uint256) {
+    function getReward(string memory msgToSign, string memory substrateSig,string memory substratePubKey,string memory machineId) external view returns (uint256) {
         address stakeholder = machineId2Address[machineId];
         StakeInfo storage stakeInfo = address2StakeInfos[stakeholder][machineId];
         return _getTotalRewardAmount(msgToSign,substrateSig,substratePubKey,machineId, stakeInfo);
@@ -297,7 +299,6 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
         if (reserved > 0 && reserved >= baseReserveAmount) {
             uint256 leftAmount = reserved-baseReserveAmount;
             stakeholder2Reserved[stakeholder] = leftAmount;
-
         }else{
             if (reserved > 0) {
                 stakeholder2Reserved[stakeholder] = 0;
@@ -305,7 +306,7 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
             machineId2LeftSlashAmount[machineId] +=baseReserveAmount-reserved;
         }
 
-    stakeInfo.slashAt = block.number;
+        stakeInfo.slashAt = block.number;
         totalStakedMachineMultiCalcPoint -=stakeInfo.calcPoint;
 
         if (reportType == ReportType.Timeout){

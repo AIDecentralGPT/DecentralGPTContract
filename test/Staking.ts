@@ -1,15 +1,18 @@
 import {
     time,
     loadFixture,
+    mine,
 } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { expect } from "chai";
 import hre from "hardhat";
+import {bigint} from "hardhat/internal/core/params/argumentTypes";
 
 const { waffle } = require("hardhat");
 
 
-describe("Lock", function () {
+
+describe("Staking", function () {
     // We define a fixture to reuse the same setup in every test.
     // We use loadFixture to run this setup once, snapshot that state,
     // and reset Hardhat Network to that snapshot in every test.
@@ -49,8 +52,8 @@ describe("Lock", function () {
         });
     });
 
-    describe("Staking should work", function () {
-        it("Staking should work correctly", async function () {
+    describe("Stake should work", function () {
+        it("Stake should work correctly", async function () {
             const { staking,rewardToken,stakingOwner,otherAccount } = await loadFixture(deployContracts);
             // stake with reserved amount should be approved first
             await expect(staking.stake("msg","sign","pubKey","machineId",1)).to.be.reverted;
@@ -60,7 +63,9 @@ describe("Lock", function () {
             const reserveAmount = BigInt(1000*10**18);
             await rewardToken.approve(staking.getAddress(), reserveAmount, { from: stakingOwner.address });
             expect(await staking.stake("msg","sign","pubKey","machineId1",reserveAmount)).to.be.ok;
-            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(reserveAmount);
+            expect(await staking.stakeholder2Reserved(await stakingOwner.getAddress())).to.be.equal(reserveAmount);
+            expect(await staking.isStaking("machineId1")).to.be.equal(true);
+            expect(await staking.getStakeHolder("machineId1")).to.be.equal(await stakingOwner.getAddress());
 
             // reserved amount should be reduced after slash
             expect(await staking.machineId2LeftSlashAmount("machineId1")).to.be.equal(0);
@@ -79,6 +84,126 @@ describe("Lock", function () {
             expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(BigInt(1000*10**18));
         });
     });
+
+    describe("Claim should work", function () {
+        it("Claim without slash should work correctly", async function () {
+            const { staking,rewardToken,stakingOwner,otherAccount } = await loadFixture(deployContracts);
+
+            const reserveAmount = BigInt(1000*10**18);
+            await rewardToken.approve(staking.getAddress(), reserveAmount, { from: stakingOwner.address });
+            expect(await staking.stake("msg","sign","pubKey","machineId1",reserveAmount)).to.be.ok;
+            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(reserveAmount);
+
+            // stake duration mocked 1000s, so the reward amount should be 1000*10 *10**18
+            const amount = BigInt(1000*10 *10**18);
+            expect(await staking.getRewardAmountCanClaim("msg","sign","pubKey","machineId1")).to.be.equal(amount);
+            expect(await staking.getReward("msg","sign","pubKey","machineId1")).to.be.equal(amount);
+
+            const tokenAmountBeforeClaim = await rewardToken.balanceOf(stakingOwner.address);
+            expect(await staking.claim("msg","sign","pubKey","machineId1")).to.be.ok;
+            expect(await rewardToken.balanceOf(stakingOwner.address)).to.be.equal(tokenAmountBeforeClaim+amount);
+        });
+
+        it("Claim with slash should work correctly", async function () {
+            const { staking,rewardToken,stakingOwner,otherAccount } = await loadFixture(deployContracts);
+
+            const reserveAmount = BigInt(1000*10**18);
+            await rewardToken.approve(staking.getAddress(), reserveAmount, { from: stakingOwner.address });
+            expect(await staking.stake("msg","sign","pubKey","machineId1",reserveAmount)).to.be.ok;
+            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(reserveAmount);
+
+            // stake duration mocked 1000s, so the reward amount should be 1000*10 *10**18
+            const amount = BigInt(1000*10 *10**18);
+            expect(await staking.getRewardAmountCanClaim("msg","sign","pubKey","machineId1")).to.be.equal(amount);
+            expect(await staking.getReward("msg","sign","pubKey","machineId1")).to.be.equal(amount);
+
+            expect(await staking.reportTimeoutMachine("machineId1")).to.be.ok;
+            const leftSlashAmount = await staking.baseReserveAmount()-reserveAmount;
+            expect(await staking.machineId2LeftSlashAmount("machineId1")).to.be.equal(leftSlashAmount);
+            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(0);
+
+            expect(await staking.getReward("msg","sign","pubKey","machineId1")).to.be.equal(amount);
+            expect(await staking.getRewardAmountCanClaim("msg","sign","pubKey","machineId1")).to.be.equal(amount-leftSlashAmount);
+
+            const tokenAmountBeforeClaim = await rewardToken.balanceOf(stakingOwner.address);
+            expect(await staking.claim("msg","sign","pubKey","machineId1")).to.be.ok;
+            expect(await rewardToken.balanceOf(stakingOwner.address)).to.be.equal(tokenAmountBeforeClaim+amount-leftSlashAmount);
+        });
+
+        it("Claim with setting setNonlinearCoefficient should work correctly", async function () {
+            const { staking,rewardToken,stakingOwner,otherAccount } = await loadFixture(deployContracts);
+
+            expect(await staking.setNonlinearCoefficient(10)).to.be.ok;
+            const reserveAmount = BigInt(1000*10**18);
+            await rewardToken.approve(staking.getAddress(), reserveAmount, { from: stakingOwner.address });
+            expect(await staking.stake("msg","sign","pubKey","machineId1",reserveAmount)).to.be.ok;
+            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(reserveAmount);
+
+            // stake duration mocked 1000s, so the reward amount should be 1000*10 *10**18
+            const amount = BigInt(1000*10 *10**18);
+            expect(await staking.getRewardAmountCanClaim("msg","sign","pubKey","machineId1")).to.be.gt(amount);
+            expect(await staking.getReward("msg","sign","pubKey","machineId1")).to.be.gt(amount);
+        });
+    });
+
+    describe("reportTimeoutMachine should work", function () {
+        it("reportTimeoutMachine should work", async function () {
+            const { staking,rewardToken,stakingOwner,otherAccount } = await loadFixture(deployContracts);
+
+            const machineId = "machineId1";
+            const reserveAmount = BigInt(1000*10**18);
+            await rewardToken.approve(staking.getAddress(), reserveAmount, { from: stakingOwner.address });
+            expect(await staking.stake("msg","sign","pubKey",machineId,reserveAmount)).to.be.ok;
+            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(reserveAmount);
+            expect(await staking.isStaking(machineId)).to.be.equal(true);
+
+            await expect(staking.connect(otherAccount).reportTimeoutMachine(machineId)).to.be.reverted;
+            expect(await staking.addReporterRoles([otherAccount.getAddress()])).to.be.ok;
+            expect(await staking.connect(otherAccount).reportTimeoutMachine(machineId)).to.be.ok;
+            expect(await staking.isStaking(machineId)).to.be.equal(false);
+            await expect(staking.connect(otherAccount).reportTimeoutMachine(machineId)).to.be.revertedWith("machine fault already reported");
+            const leftSlashAmount = await staking.baseReserveAmount()-reserveAmount;
+            expect(await staking.machineId2LeftSlashAmount(machineId)).to.be.equal(leftSlashAmount);
+            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(0);
+        });
+
+        it("can not reportTimeoutMachine after removed role", async function () {
+            const { staking,rewardToken,stakingOwner,otherAccount } = await loadFixture(deployContracts);
+
+            const machineId = "machineId1";
+            const reserveAmount = BigInt(1000*10**18);
+            await rewardToken.approve(staking.getAddress(), reserveAmount, { from: stakingOwner.address });
+            expect(await staking.stake("msg","sign","pubKey",machineId,reserveAmount)).to.be.ok;
+            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(reserveAmount);
+
+            await expect(staking.connect(otherAccount).reportTimeoutMachine(machineId)).to.be.reverted;
+            expect(await staking.addReporterRoles([otherAccount.getAddress()])).to.be.ok;
+            expect(await staking.removeReporterRole(otherAccount.getAddress())).to.be.ok;
+            await expect(staking.connect(otherAccount).reportTimeoutMachine(machineId)).to.be.reverted;
+        });
+    });
+
+    describe("unstake should work", function () {
+        it("unstake should work", async function () {
+            const { staking,rewardToken,stakingOwner,otherAccount } = await loadFixture(deployContracts);
+
+            const machineId = "machineId1";
+            const reserveAmount = BigInt(1000*10**18);
+            await rewardToken.approve(staking.getAddress(), reserveAmount, { from: stakingOwner.address });
+            expect(await staking.stake("msg","sign","pubKey",machineId,reserveAmount)).to.be.ok;
+            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(reserveAmount);
+            expect(await staking.isStaking(machineId)).to.be.equal(true);
+            const amountAfterStake = await rewardToken.balanceOf(stakingOwner.getAddress());
+            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(reserveAmount);
+            expect(await staking.unStakeAndClaim("msg","sign","pubKey",machineId)).to.be.ok;
+            expect(await rewardToken.balanceOf(stakingOwner.getAddress())).to.be.equal(amountAfterStake+reserveAmount+BigInt(10000*10**18));
+            expect(await staking.stakeholder2Reserved(stakingOwner.getAddress())).to.be.equal(0);
+            const stakeInfo = await staking.address2StakeInfos(await stakingOwner.getAddress(),machineId);
+            expect(stakeInfo.endAtBlockNumber).to.be.not.equal(0);
+        });
+    });
+
+
 
     // describe("Withdrawals", function () {
     //     describe("Validations", function () {
